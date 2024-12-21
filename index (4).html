@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Zoom and Pan</title>
+    <style>
+        canvas {
+            border: 1px solid black;
+            display: block;
+            margin: 20px auto;
+            touch-action: none; /* Disable default touch gestures on canvas */
+        }
+        .controls {
+            text-align: center;
+            margin-bottom: 20px;
+            padding: 20px;
+            border: 1px solid #ccc;
+            border-radius: 10px;
+            background-color: #f9f9f9;
+            width: 80%;
+            margin-left: auto;
+            margin-right: auto;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+        .controls label {
+            font-size: 18px;
+            margin-right: 10px;
+        }
+        .controls input {
+            font-size: 16px;
+            padding: 5px;
+            margin: 5px;
+            width: 80px;
+            text-align: center;
+        }
+        .controls button {
+            font-size: 18px;
+            padding: 10px 20px;
+            margin: 10px;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            background-color: #007bff;
+            color: white;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            transition: background-color 0.3s;
+        }
+        .controls button:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <label for="speed1">Arm 1 Speed:</label>
+        <input type="number" id="speed1" value="0.02" step="0.01">
+        <label for="speed2">Arm 2 Speed:</label>
+        <input type="number" id="speed2" value="0.03" step="0.01">
+        <div>
+            <button id="startButton">Start</button>
+            <button id="stopButton">Stop</button>
+            <button id="resumeButton">Resume</button>
+        </div>
+    </div>
+    <canvas id="curveCanvas" width="800" height="600"></canvas>
+
+    <script>
+        const canvas = document.getElementById('curveCanvas');
+        const ctx = canvas.getContext('2d');
+
+        const pivot1 = { x: 200, y: 300 }; // First pivot point
+        const pivot2 = { x: 300, y: 300 }; // Second pivot point
+        const arm1Length = 400;
+        const arm2Length = 400;
+        let angle1 = 0;
+        let angle2 = 0;
+
+        let speed1 = 0.02;
+        let speed2 = 0.03;
+
+        let intersectionPoints = [];
+        let animationId;
+        let isRunning = false;
+
+        let scale = 1;
+        let offsetX = 0, offsetY = 0;
+        let lastTouchDistance = null;
+        let lastTouchMidpoint = null;
+        let isPanning = false;
+        let startPan = { x: 0, y: 0 };
+
+        // Function to calculate arm endpoints
+        function calculateEndpoint(pivot, length, angle) {
+            return {
+                x: pivot.x + length * Math.cos(angle),
+                y: pivot.y + length * Math.sin(angle),
+            };
+        }
+
+        // Function to calculate intersection point
+        function calculateIntersection(p1, p1End, p2, p2End) {
+            const dx1 = p1End.x - p1.x;
+            const dy1 = p1End.y - p1.y;
+            const dx2 = p2End.x - p2.x;
+            const dy2 = p2End.y - p2.y;
+
+            const det = dx1 * dy2 - dy1 * dx2;
+            if (det === 0) return null;
+
+            const t1 = ((p2.x - p1.x) * dy2 - (p2.y - p1.y) * dx2) / det;
+            return {
+                x: p1.x + t1 * dx1,
+                y: p1.y + t1 * dy1,
+            };
+        }
+
+        // Function to draw everything
+        function drawFrame() {
+            ctx.setTransform(scale, 0, 0, scale, offsetX, offsetY);
+            ctx.clearRect(-offsetX / scale, -offsetY / scale, canvas.width / scale, canvas.height / scale);
+
+            const arm1End = calculateEndpoint(pivot1, arm1Length, angle1);
+            const arm2End = calculateEndpoint(pivot2, arm2Length, angle2);
+
+            ctx.strokeStyle = 'blue';
+            ctx.beginPath();
+            ctx.moveTo(pivot1.x, pivot1.y);
+            ctx.lineTo(arm1End.x, arm1End.y);
+            ctx.stroke();
+
+            ctx.strokeStyle = 'red';
+            ctx.beginPath();
+            ctx.moveTo(pivot2.x, pivot2.y);
+            ctx.lineTo(arm2End.x, arm2End.y);
+            ctx.stroke();
+
+            const intersection = calculateIntersection(pivot1, arm1End, pivot2, arm2End);
+            if (intersection) {
+                intersectionPoints.push(intersection);
+
+                ctx.fillStyle = 'green';
+                ctx.beginPath();
+                ctx.arc(intersection.x, intersection.y, 2, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            if (intersectionPoints.length > 1) {
+                ctx.strokeStyle = 'magenta';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(intersectionPoints[0].x, intersectionPoints[0].y);
+                for (let i = 1; i < intersectionPoints.length; i++) {
+                    ctx.lineTo(intersectionPoints[i].x, intersectionPoints[i].y);
+                }
+                ctx.stroke();
+            }
+
+            angle1 += speed1;
+            angle2 += speed2;
+
+            if (intersectionPoints.length > 1000) {
+                intersectionPoints.shift();
+            }
+
+            animationId = requestAnimationFrame(drawFrame);
+        }
+
+        // Zoom and pan functionality
+        function handleTouchStart(event) {
+            if (event.touches.length === 2) {
+                lastTouchDistance = getTouchDistance(event.touches);
+                lastTouchMidpoint = getMidpoint(event.touches);
+            } else if (event.touches.length === 1) {
+                isPanning = true;
+                startPan.x = event.touches[0].clientX - offsetX;
+                startPan.y = event.touches[0].clientY - offsetY;
+            }
+        }
+
+        function handleTouchMove(event) {
+            event.preventDefault();
+            if (event.touches.length === 2) {
+                const currentDistance = getTouchDistance(event.touches);
+                const currentMidpoint = getMidpoint(event.touches);
+
+                if (lastTouchDistance) {
+                    const scaleChange = currentDistance / lastTouchDistance;
+                    scale *= scaleChange;
+
+                    offsetX += (currentMidpoint.x - lastTouchMidpoint.x) * (1 - scaleChange);
+                    offsetY += (currentMidpoint.y - lastTouchMidpoint.y) * (1 - scaleChange);
+
+                    lastTouchDistance = currentDistance;
+                    lastTouchMidpoint = currentMidpoint;
+                }
+            } else if (event.touches.length === 1 && isPanning) {
+                const touch = event.touches[0];
+                offsetX = touch.clientX - startPan.x;
+                offsetY = touch.clientY - startPan.y;
+            }
+        }
+
+        function handleTouchEnd(event) {
+            if (event.touches.length < 2) {
+                lastTouchDistance = null;
+                lastTouchMidpoint = null;
+            }
+            if (event.touches.length === 0) {
+                isPanning = false;
+            }
+        }
+
+        // Utility functions
+        function getTouchDistance(touches) {
+            const dx = touches[0].clientX - touches[1].clientX;
+            const dy = touches[0].clientY - touches[1].clientY;
+            return Math.sqrt(dx * dx + dy * dy);
+        }
+
+        function getMidpoint(touches) {
+            return {
+                x: (touches[0].clientX + touches[1].clientX) / 2,
+                y: (touches[0].clientY + touches[1].clientY) / 2,
+            };
+        }
+
+        // Attach touch event listeners
+        canvas.addEventListener('touchstart', handleTouchStart);
+        canvas.addEventListener('touchmove', handleTouchMove);
+        canvas.addEventListener('touchend', handleTouchEnd);
+
+        // Buttons
+        document.getElementById('startButton').addEventListener('click', () => {
+            intersectionPoints = [];
+            speed1 = parseFloat(document.getElementById('speed1').value);
+            speed2 = parseFloat(document.getElementById('speed2').value);
+            cancelAnimationFrame(animationId);
+            isRunning = true;
+            drawFrame();
+        });
+
+        document.getElementById('stopButton').addEventListener('click', () => {
+            cancelAnimationFrame(animationId);
+            isRunning = false;
+        });
+
+        document.getElementById('resumeButton').addEventListener('click', () => {
+            if (!isRunning) {
+                isRunning = true;
+                drawFrame();
+            }
+        });
+    </script>
+</body>
+</html>
